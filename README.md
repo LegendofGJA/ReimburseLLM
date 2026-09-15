@@ -1,64 +1,151 @@
-# Scan Reimburse Struk
+<div align="center">
 
-Aplikasi Streamlit untuk mengekstrak data struk (bensin, parkir, Teazzi/drink)
-dari foto, mengurutkannya kronologis berdasarkan tanggal transaksi, mengisi
-template Excel reimburse, dan menggabungkan foto struk asli menjadi satu PDF
-tanpa kompresi.
+# 🧾 ReimburseLLM
 
-## Setup lokal
+**Scan & ekstraksi struk jadi Excel reimburse — otomatis, kronologis, tanpa kompresi.**
+
+Upload sebulan foto struk (bensin, parkir, Teazzi) dan screenshot Flazz/e-money.
+Model vision membaca tiap gambar, mengisi template Excel, dan menggabungkan semua
+bukti asli ke satu PDF.
+
+[![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](https://streamlit.io)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org)
+[![License](https://img.shields.io/badge/License-MIT-22c55e?style=for-the-badge)](#-lisensi)
+
+</div>
+
+---
+
+## ✨ Fitur
+
+| | Fitur | Keterangan |
+|---|---|---|
+| 🔍 | **OCR multi-upload** | Unggah banyak foto struk sekaligus untuk satu bulan penuh. |
+| 🧠 | **Multi-provider vision** | Kagiro & Bandel, pilih provider + model secara manual. |
+| 🚗 | **Aturan per kategori** | Bensin, Parkir, dan Drink (Teazzi) dipetakan sesuai aturan baku. |
+| 💳 | **Dedup Flazz** | Baris parkir di screenshot Flazz yang sama dengan struk fisik tidak dobel. |
+| ⏱️ | **Urut kronologis** | Diurutkan berdasarkan tanggal + jam (timestamp) struk/transaksi. |
+| 📅 | **Periode otomatis** | Sel **E6** = transaksi terawal, **E7** = transaksi terakhir. |
+| 📍 | **Fallback GPS** | Nama parkir tanpa teks di struk diisi dari EXIF GPS + reverse geocode. |
+| 📄 | **PDF gabungan** | Semua bukti asli digabung jadi satu PDF **tanpa kompresi / downsizing**. |
+| 🩺 | **Cek API hidup** | Ping sungguhan ke model terpilih — hanya saat tombol ditekan. |
+
+---
+
+## 🚀 Mulai Cepat
+
+### 1. Clone & install
 
 ```bash
-git clone <url-repo-ini>
-cd <folder-repo>
+git clone https://github.com/<username>/<repo>.git
+cd <repo>
 pip install -r requirements.txt
 ```
 
-Buat file secrets (jangan pernah commit file ini — sudah masuk `.gitignore`):
+### 2. Siapkan secrets
 
 ```bash
-mkdir -p .streamlit
 cp .streamlit/secrets.toml.example .streamlit/secrets.toml
 ```
 
-Lalu isi `.streamlit/secrets.toml` dengan API key asli kamu:
+Isi `.streamlit/secrets.toml` dengan API key asli:
 
 ```toml
 KAGIRO_API_KEY = "mk-...."
 BANDEL_API_KEY = "sk-qwen-...."
 ```
 
-Jalankan:
+> 🔒 File `secrets.toml` **tidak pernah** ikut ter-commit — sudah dikecualikan oleh `.gitignore`.
+
+### 3. Jalankan
 
 ```bash
 streamlit run app.py
 ```
 
-## Deploy ke Streamlit Community Cloud
+---
 
-1. Push repo ini ke GitHub (tanpa `.streamlit/secrets.toml` — otomatis ter-skip oleh `.gitignore`).
-2. Buat app baru di [share.streamlit.io](https://share.streamlit.io), arahkan ke `app.py`.
-3. Di menu **App → Settings → Secrets**, tempel isi yang sama seperti `secrets.toml` kamu.
-4. Deploy.
+## ☁️ Deploy ke Streamlit Community Cloud
 
-## Sebelum push pertama kali — pastikan key lama sudah dicabut
+1. Push repo ini ke GitHub (tanpa `.streamlit/secrets.toml`).
+2. Buat app baru di [share.streamlit.io](https://share.streamlit.io) → arahkan ke `app.py`.
+3. Buka **App → Settings → Secrets**, tempel isi yang sama seperti `secrets.toml`.
+4. Deploy. 🎉
 
-File `app.py` versi awal sempat menyimpan API key langsung di kode (hardcoded)
-sebelum direfaktor ke `st.secrets`. Kalau kamu sempat menjalankan/menyimpan
-versi itu di folder lain, atau riwayat commit lokal git kamu ada yang memuat
-key tersebut:
+---
 
-- **Revoke / rotate** kedua API key (Kagiro & Bandel) dari dashboard masing-masing provider, buat key baru.
-- Pastikan `git log -p` di repo ini tidak memuat key lama sebelum di-push (repo baru dari file-file ini seharusnya bersih, tapi cek dulu kalau kamu menggabungkan dengan folder kerja lama).
+## 📖 Cara Pakai
 
-## Struktur file
+1. **Isi Data Pemohon** di sidebar (Name, Department, Purpose, Bank Acc.).
+2. **Pilih Provider OCR** — Kagiro atau Bandel, lalu pilih **Model Vision**.
+   Daftar model diambil sekali per provider (tanpa ping) dan di-cache.
+3. *(Opsional)* **🩺 Cek API hidup** untuk memastikan model terpilih merespons.
+4. **Unggah Bukti** — foto struk fisik, dan screenshot Flazz/e-money (opsional).
+5. Klik **Ekstraksi** → unduh **Excel** dan **PDF gabungan**.
 
-- `app.py` — aplikasi utama (UI Streamlit + orkestrasi proses)
-- `llm_core.py` — koneksi provider (Kagiro/Bandel), ping model sungguhan, call vision (retry + timeout)
-- `extract_core.py` — prompt + aturan ekstraksi per kategori, dedup Flazz vs struk parkir, skip Top Up
-- `excel_core.py` — isi data ke template Excel (header, periode E6/E7, total)
-- `pdf_core.py` — gabung gambar asli jadi satu PDF tanpa kompresi
-- `gps_core.py` — baca lokasi GPS dari EXIF foto struk
-- `requirements.txt` — dependency Python
-- `FORM_REIMBURSE_template.xlsx` — template Excel yang diisi otomatis
-- `.streamlit/secrets.toml.example` — contoh format secrets (bukan secrets asli)
-- `.gitignore` — mengecualikan `secrets.toml` dan file lain dari repo
+---
+
+## 📐 Aturan Ekstraksi
+
+- **Bensin** — `Pertalite` → description cukup nama BBM. `Pertamax`/jenis lain →
+  description berisi jenis BBM + jumlah liter; nominal tetap total akhir struk.
+- **Drink (Teazzi)** — description berisi jenis minuman & nama outlet; nominal total akhir.
+- **Parkir** — description berisi nama tempat, atau `-` jika tidak tertera (isi manual nanti).
+- **Dedup Flazz** — baris `Parking` di screenshot Flazz yang tanggal & nominalnya sama
+  persis dengan struk parkir fisik **di-skip**. Baris `Top Up` **selalu** di-skip.
+- **Sorting** — hasil di Excel diurutkan dari tanggal transaksi paling awal ke akhir.
+- **Periode** — sel **E6** (awal) & **E7** (akhir) diisi otomatis dari timestamp transaksi.
+- **PDF** — seluruh foto struk dan screenshot Flazz digabung **tanpa kompresi**.
+
+---
+
+## 🗂️ Struktur Proyek
+
+```
+├── 🏠 app.py                      → UI Streamlit + orkestrasi proses
+├── 🧠 llm_core.py                 → Provider, ping model sungguhan, call vision (retry/timeout)
+├── 📝 extract_core.py             → Prompt + aturan ekstraksi + dedup Flazz + skip Top Up
+├── 📊 excel_core.py               → Isi template Excel (header, periode E6/E7, total)
+├── 📄 pdf_core.py                 → Gabung gambar asli → PDF tanpa kompresi
+├── 📍 gps_core.py                 → Baca lokasi GPS dari EXIF foto struk
+├── 📗 FORM_REIMBURSE_template.xlsx → Template Excel yang diisi otomatis
+├── 📦 requirements.txt            → Dependency Python
+│
+├── 📁 .streamlit/                 → secrets.toml.example
+├── 📁 .devcontainer/              → devcontainer.json (Python 3.11 + auto-run Streamlit)
+└── 📁 .github/workflows/          → keep-alive.yml (ping opsional)
+```
+
+---
+
+## 🛠️ Teknologi
+
+- **[Streamlit](https://streamlit.io)** — UI web interaktif
+- **[Pillow](https://python-pillow.org)** — normalisasi & resize gambar
+- **[img2pdf](https://pypi.org/project/img2pdf/)** — gabung gambar jadi PDF tanpa kompresi
+- **[openpyxl](https://openpyxl.readthedocs.io)** — tulis template Excel
+- **[pandas](https://pandas.pydata.org)** — agregasi & sorting data
+- **[requests](https://requests.readthedocs.io)** — panggilan provider vision
+
+---
+
+## 🔐 Keamanan
+
+> ⚠️ **Jangan pernah** commit `secrets.toml` atau API key ke repo.
+>
+> Kalau key pernah terekspos di kode lama/history, segera **revoke & rotate**
+> di dashboard provider dan buat key baru.
+>
+> Isi API key lewat **App → Settings → Secrets** di Streamlit Cloud, bukan lewat file di repo.
+
+---
+
+## 📄 Lisensi
+
+Dirilis di bawah lisensi **MIT** — lihat [LICENSE](LICENSE) untuk detail.
+
+<div align="center">
+
+**Dibuat dengan ❤️ untuk mempercepat urusan reimburse.**
+
+</div>
