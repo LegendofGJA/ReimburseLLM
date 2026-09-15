@@ -1,5 +1,5 @@
 """
-llm_core.py — Koneksi provider AI vision (Kagiro / Bandel).
+llm_core.py — Koneksi provider AI vision (Kagiro / Bandel / 9router / custom).
 
 Menyediakan:
   - `PROVIDERS`       : konfigurasi provider dari st.secrets (bukan hardcoded).
@@ -38,18 +38,24 @@ def _get_secret(key: str, default: str = "") -> str:
     return os.environ.get(key, default)
 
 
-PROVIDERS = {
-    "Kagiro": {
-        "base_url": _get_secret("KAGIRO_BASE_URL", "https://api.kagiro.net/v1"),
-        "api_key": _get_secret("KAGIRO_API_KEY"),
-    },
-    "Bandel": {
-        "base_url": _get_secret("BANDEL_BASE_URL", "https://bandelbanget.xyz/v1"),
-        "api_key": _get_secret("BANDEL_API_KEY"),
-    },
-}
-# Provider tanpa API key di-skip (supaya tidak error saat salah satu belum di-set).
-PROVIDERS = {k: v for k, v in PROVIDERS.items() if v["api_key"]}
+# Setiap provider dibaca dari secrets. `api_key` diambil dari <PREFIX>_API_KEY
+# (atau <PREFIX>_KEY); `base_url` dari <PREFIX>_BASE_URL. Provider tanpa API
+# key otomatis di-skip, jadi kamu bebas menambah/menghapus provider.
+_PROVIDER_DEFS = [
+    ("Kagiro", "KAGIRO", "https://api.kagiro.net/v1"),
+    ("Bandel", "BANDEL", "https://bandelbanget.xyz/v1"),
+    ("9router", "ROUTER9", "https://rrakv37.abc-tunnel.us/v1"),
+]
+
+PROVIDERS = {}
+for _name, _prefix, _default_url in _PROVIDER_DEFS:
+    _key = _get_secret(f"{_prefix}_API_KEY") or _get_secret(f"{_prefix}_KEY")
+    if _key:
+        PROVIDERS[_name] = {
+            "base_url": _get_secret(f"{_prefix}_BASE_URL", _default_url),
+            "api_key": _key,
+        }
+del _name, _prefix, _default_url, _key
 
 # Fallback kalau endpoint /models tidak tersedia / kosong.
 FALLBACK_MODELS = [
@@ -76,7 +82,7 @@ def _auth_headers(cfg: dict) -> dict:
 _VISION_HINTS = (
     "vl",
     "vision",
-    "flash-vision",
+    "flash",  # gemini/deepseek/claude "flash" pada gateway = multimodal
     "gpt-4o",  # gpt-4o sebenarnya multimodal, pertahankan sebagai vision hint
     "gpt-4.1",
     "gemini",
@@ -137,7 +143,7 @@ def fetch_vision_models(provider_name: str) -> list:
 
 
 def ping_model(provider_name: str, model: str) -> tuple:
-    """Kirim completion kecil beneran ke model dan laporkan hasilnya.
+    """Kirim chat kecil "hi" ke model dan laporkan hasilnya.
 
     Return (ok: bool, pesan: str, ms: int|None).
     """
@@ -145,8 +151,8 @@ def ping_model(provider_name: str, model: str) -> tuple:
     url = f"{cfg['base_url']}/chat/completions"
     payload = {
         "model": model,
-        "messages": [{"role": "user", "content": "ping"}],
-        "max_tokens": 5,
+        "messages": [{"role": "user", "content": "hi"}],
+        "max_tokens": 20,
         "temperature": 0,
     }
     headers = {**_auth_headers(cfg), "Content-Type": "application/json"}
@@ -158,12 +164,20 @@ def ping_model(provider_name: str, model: str) -> tuple:
             data = r.json()
             content = ""
             try:
-                content = data["choices"][0]["message"]["content"]
+                msg = data["choices"][0]["message"]
+                content = msg.get("content", "")
+                # Sebagian gateway mengembalikan content sebagai list of parts.
+                if isinstance(content, list):
+                    content = " ".join(
+                        str(p.get("text", "")) if isinstance(p, dict) else str(p)
+                        for p in content
+                    )
             except (KeyError, IndexError, TypeError):
                 content = ""
-            if content is None or str(content).strip() == "":
+            reply = (content or "").strip()
+            if not reply:
                 return False, f"⚠️ HTTP 200 tapi balasan kosong ({ms} ms)", ms
-            return True, f"✅ Model merespons beneran ({ms} ms)", ms
+            return True, f"✅ Model merespons: “{reply[:60]}” ({ms} ms)", ms
         else:
             return False, f"❌ Status {r.status_code}: {r.text[:120]}", ms
     except Exception as e:
@@ -256,6 +270,11 @@ def call_vision(
                 raise ValueError(
                     f"Format respons tidak dikenali dari {provider_name}: "
                     f"{r.text[:200]}"
+                )
+            if isinstance(raw_content, list):
+                raw_content = " ".join(
+                    str(p.get("text", "")) if isinstance(p, dict) else str(p)
+                    for p in raw_content
                 )
             content = re.sub(r"```(?:json)?|```", "", str(raw_content or "")).strip()
             last_content = content
