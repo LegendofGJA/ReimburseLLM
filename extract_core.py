@@ -179,48 +179,117 @@ def _is_topup(row: dict) -> bool:
 
 def normalise_flazz_rows(flazz_items: list) -> list:
     """Buang baris Top Up, lalu kembalikan baris parkir (label mengandung
-    'park') sebagai list dict {date, nominal} + raw untuk description."""
-    rows = []
-    for it in flazz_items:
-        if _is_topup(it):
-            continue
-        label = (it.get("label") or "").strip()
-        is_parking = "park" in label.lower()
-        rows.append(
-            {
-                "date": parse_date_safe(it.get("date")),
-                "nominal": parse_nominal(it.get("nominal")),
-                "label": label,
-                "is_parking": is_parking,
-            }
-        )
-    return rows
+    'park') sebagai list dict {date, nominal, label, is_parking}.
+
+    flazz_items bisa berupa list flat (dict), ataupun list[list[dict]]
+    (per-screenshot). Untuk flat, diperlakukan sebagai satu screenshot."""
+    if flazz_items and isinstance(flazz_items[0], list):
+        per_file = flazz_items
+    else:
+        per_file = [flazz_items]
+
+    result = []
+    for items in per_file:
+        for it in items:
+            if _is_topup(it):
+                continue
+            label = (it.get("label") or "").strip()
+            is_parking = "park" in label.lower()
+            result.append(
+                {
+                    "date": parse_date_safe(it.get("date")),
+                    "nominal": parse_nominal(it.get("nominal")),
+                    "label": label,
+                    "is_parking": is_parking,
+                }
+            )
+    return result
 
 
 def dedupe_flazz_against_receipts(flazz_rows: list, receipt_rows: list) -> tuple:
     """Cocokkan baris Flazz 'parkir' ke struk parkir fisik berdasar
     (tanggal, nominal). Baris yang match persis di-SKIP (sudah terwakili struk).
 
+    flazz_rows dapat berupa:
+      - list flat dict (hasil normalise_flazz_rows), atau
+      - list[list[dict]] (per screenshot).
+
+    Dedup antar-screenshot: bila N screenshot tumpang tindih menangkap riwayat
+    yang sama, satu transaksi (date, nominal) legal muncul hingga N kali — tapi
+    sebenarnya transaksi yang sama. Jadi jumlah maksimum kejadian suatu key
+    dalam SATU screenshot dipakai sebagai "jumlah asli"; selebihnya di-skip.
+
     receipt_rows: list dict hasil build_rows (memiliki date, category, nominal).
 
     Return (kept: list[flazz_rows], skipped: int, matched_pairs: list[tuple]).
     """
-    receipt_pairs = set()
-    for r in receipt_rows:
-        if (r.get("category") or "") == "parkir" and r.get("date") and r.get("nominal"):
-            receipt_pairs.add((r["date"], round(float(r["nominal"]), 2)))
+    if flazz_rows and isinstance(flazz_rows[0], list):
+        per_file = flazz_rows
+    else:
+        per_file = [flazz_rows]
+
+    # Normalisasi internal: buang Top Up + tandai is_parking per baris.
+    per_file = [normalise_flazz_rows(items) for items in per_file]
+
+    # Flatten + lampirkan index file asal untuk hitung count per-file.
+    receipts = [
+        r
+        for r in receipt_rows
+        if (r.get("category") or "") == "parkir" and r.get("date") and r.get("nominal")
+    ]
+    receipt_pairs = {
+        (r["date"], round(float(r["nominal"]), 2)) for r in receipts
+    }
+
+    def _key(fr):
+        return (fr["date"], round(float(fr["nominal"]), 2))
+
+    # Hitung berapa kali tiap key muncul di dalam SATU screenshot (maksimum).
+    key_max_in_single = {}
+    for items in per_file:
+        src_counts = {}
+        for it in items:
+            if not it.get("is_parking") or not it.get("date"):
+                continue
+            k = _key(it)
+            src_counts[k] = src_counts.get(k, 0) + 1
+        for k, c in src_counts.items():
+            if c > key_max_in_single.get(k, 0):
+                key_max_in_single[k] = c
+
+    # Flatten dengan urutan stabil (file per file).
+    flattened = []
+    for items in per_file:
+        for it in items:
+            flattened.append(it)
 
     kept = []
     skipped = 0
     matched = []
-    for fr in flazz_rows:
+    seen = {}
+    for fr in flattened:
         if not fr["is_parking"]:
             kept.append(fr)
             continue
-        key = (fr["date"], round(float(fr["nominal"]), 2))
+        key = _key(fr)
+
+        # 1) Sudah terwakili struk parkir fisik -> skip.
         if fr["date"] and key in receipt_pairs:
             skipped += 1
             matched.append((fr["date"], fr["nominal"]))
             continue
+
+        if not fr["date"]:
+            kept.append(fr)
+            continue
+
+        # 2) Dedup antar-screenshot: izinkan sampai jumlah max dalam 1 screenshot.
+        allow = key_max_in_single.get(key, 1)
+        already = seen.get(key, 0)
+        if already >= allow:
+            skipped += 1
+            matched.append((fr["date"], fr["nominal"]))
+            continue
+        seen[key] = already + 1
         kept.append(fr)
     return kept, skipped, matched
