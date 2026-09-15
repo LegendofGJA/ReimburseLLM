@@ -70,6 +70,33 @@ def _auth_headers(cfg: dict) -> dict:
 # ─────────────────────────────────────────────────────────────────────────
 
 
+# Pola id yang lazim untuk model VISION (bisa menerima input gambar).
+# Jika endpoint /models tidak memberi flag "vision"/"image", kita filter
+# berdasarkan nama id supaya dropdown hanya menampilkan model vision.
+_VISION_HINTS = (
+    "vl",
+    "vision",
+    "flash-vision",
+    "gpt-4o",  # gpt-4o sebenarnya multimodal, pertahankan sebagai vision hint
+    "gpt-4.1",
+    "gemini",
+    "claude",
+    "minimax-vl",
+    "internvl",
+    "glm-4v",
+    "glm-4.5v",
+    "qwen-vl",
+    "qwen2.5-vl",
+    "kimi-k",
+    "kimi-latest",
+)
+
+
+def _is_vision(model_id: str) -> bool:
+    m = model_id.lower()
+    return any(h in m for h in _VISION_HINTS)
+
+
 def fetch_models(provider_name: str) -> list:
     """Ambil daftar model id dari /models. Gagal -> fallback default."""
     cfg = PROVIDERS[provider_name]
@@ -89,6 +116,19 @@ def fetch_models(provider_name: str) -> list:
     except Exception:
         pass
     return list(FALLBACK_MODELS)
+
+
+def fetch_vision_models(provider_name: str) -> list:
+    """Daftar model VISION saja (tanpa ping) dari /models. Gagal -> fallback
+    default yang sudah difilter vision; kalau kosong sama sekali, kembalikan
+    fallback mentah supaya dropdown tidak kosong."""
+    all_ids = fetch_models(provider_name)
+    vision = [m for m in all_ids if _is_vision(m)]
+    if vision:
+        return vision
+    # Tidak ada yang terdeteksi vision -> fallback ke daftar default (vision).
+    fallback_vision = [m for m in FALLBACK_MODELS if _is_vision(m)]
+    return fallback_vision or all_ids
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -131,18 +171,13 @@ def ping_model(provider_name: str, model: str) -> tuple:
 
 
 def check_all_providers() -> dict:
-    """Scan model per provider: setiap model di-ping sungguhan.
+    """Scan semua provider: daftar model (tanpa ping per model).
 
-    Return {provider_name: {"models": [id...], "results": {model: (ok,pesan)}}}
+    Return {provider_name: {"models": [id vision...]}}
     """
     out = {}
     for name in PROVIDERS:
-        models = fetch_models(name)
-        results = {}
-        for m in models:
-            ok, pesan, _ms = ping_model(name, m)
-            results[m] = (ok, pesan)
-        out[name] = {"models": models, "results": results}
+        out[name] = {"models": fetch_vision_models(name)}
     return out
 
 
@@ -210,15 +245,41 @@ def call_vision(
     }
 
     last_err = None
+    last_content = ""
     for attempt in range(retries + 1):
         try:
             r = requests.post(url, headers=headers, json=payload, timeout=timeout)
             r.raise_for_status()
-            content = r.json()["choices"][0]["message"]["content"]
-            content = re.sub(r"```(?:json)?|```", "", str(content)).strip()
-            return json.loads(content)
+            try:
+                raw_content = r.json()["choices"][0]["message"]["content"]
+            except (KeyError, IndexError, TypeError):
+                raise ValueError(
+                    f"Format respons tidak dikenali dari {provider_name}: "
+                    f"{r.text[:200]}"
+                )
+            content = re.sub(r"```(?:json)?|```", "", str(raw_content or "")).strip()
+            last_content = content
+            if not content:
+                raise ValueError("Respons model kosong (empty response).")
+            try:
+                return json.loads(content)
+            except json.JSONDecodeError:
+                # Coba ekstrak objek/array JSON pertama dari teks bebas.
+                start = min(
+                    [i for i in (content.find("{"), content.find("[")) if i != -1],
+                    default=-1,
+                )
+                if start != -1:
+                    return json.loads(content[start:])
+                raise
         except Exception as e:
             last_err = e
             if attempt < retries:
                 time.sleep(2 * (attempt + 1))  # backoff: 2s, 4s
+    if isinstance(last_err, json.JSONDecodeError):
+        snippet = (last_content or "")[:200]
+        raise ValueError(
+            f"Gagal parse JSON dari model {model}. "
+            f"Raw output: '{snippet}' Error: {last_err}"
+        )
     raise last_err if last_err else RuntimeError("call_vision gagal")
