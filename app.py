@@ -164,7 +164,7 @@ with col_flazz:
 st.info(
     """
 **Aturan ekstraksi & format output:**
-1. **Sorting kronologis:** hasil Excel diurutkan dari tanggal transaksi struk paling awal ke akhir (bukan urutan upload).
+1. **Sorting kronologis:** hasil Excel diurutkan dari tanggal & jam transaksi paling awal ke akhir (bukan urutan upload).
 2. **Bensin:** Pertalite → description cukup nama BBM. Pertamax/jenis lain → description berisi jenis BBM + jumlah liter, nominal tetap total akhir struk.
 3. **Drink (Teazzi):** description berisi jenis minuman & nama outlet, nominal total akhir.
 4. **Parkir:** description berisi nama tempat (atau `-` jika tidak ada), nominal total.
@@ -242,6 +242,7 @@ if st.button("🚀 Mulai Proses OCR, Sorting, Generate Excel & PDF", type="prima
             flazz_as_receipts.append(
                 {
                     "date": fr["date"],
+                    "time": fr.get("time"),
                     "type": "parkir",
                     "nominal": fr["nominal"],
                     "location_name": "-",
