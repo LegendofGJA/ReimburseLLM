@@ -21,7 +21,7 @@ bukti asli ke satu PDF.
 | | Fitur | Keterangan |
 |---|---|---|
 | 🔍 | **OCR multi-upload** | Unggah banyak foto struk sekaligus untuk satu bulan penuh. |
-| 🧠 | **Multi-provider vision** | Kagiro & Bandel, pilih provider + model secara manual. |
+| 🧠 | **Multi-provider vision** | Kagiro, Bandel & 9router (gateway custom) — pilih provider + model manual. |
 | 🚗 | **Aturan per kategori** | Bensin, Parkir, dan Drink (Teazzi) dipetakan sesuai aturan baku. |
 | 💳 | **Dedup Flazz** | Baris parkir di screenshot Flazz yang sama dengan struk fisik tidak dobel. |
 | ⏱️ | **Urut kronologis** | Diurutkan berdasarkan tanggal + jam (timestamp) struk/transaksi. |
@@ -48,11 +48,15 @@ pip install -r requirements.txt
 cp .streamlit/secrets.toml.example .streamlit/secrets.toml
 ```
 
-Isi `.streamlit/secrets.toml` dengan API key asli:
+Isi `.streamlit/secrets.toml` dengan API key asli (satu blok per provider; provider tanpa key otomatis hilang dari dropdown):
 
 ```toml
 KAGIRO_API_KEY = "mk-...."
 BANDEL_API_KEY = "sk-qwen-...."
+
+# 9router (gateway custom) — nama provider di dropdown: "9router"
+ROUTER9_API_KEY = "sk-...."
+ROUTER9_BASE_URL = "https://rrakv37.abc-tunnel.us/v1"
 ```
 
 > 🔒 File `secrets.toml` **tidak pernah** ikut ter-commit — sudah dikecualikan oleh `.gitignore`.
