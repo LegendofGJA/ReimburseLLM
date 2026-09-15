@@ -82,7 +82,10 @@ def _auth_headers(cfg: dict) -> dict:
 _VISION_HINTS = (
     "vl",
     "vision",
-    "flash",  # gemini/deepseek/claude "flash" pada gateway = multimodal
+    # Catatan: TIDAK memakai hint generik "flash"/"deepseek", karena banyak
+    # model non-vision (mis. cbai/deepseek-v4.1-flash) ikut lolos padahal
+    # tidak bisa OCR gambar. Model vision di bawah ini dipilih lewat pola
+    # id yang spesifik.
     "gpt-4o",  # gpt-4o sebenarnya multimodal, pertahankan sebagai vision hint
     "gpt-4.1",
     "gemini",
