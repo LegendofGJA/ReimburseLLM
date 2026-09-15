@@ -24,7 +24,6 @@ from extract_core import (
     FLAZZ_PROMPT,
     build_rows,
     dedupe_flazz_against_receipts,
-    normalise_flazz_rows,
 )
 from gps_core import gps_location_name, read_gps
 from llm_core import PROVIDERS, fetch_vision_models, ping_model
@@ -209,8 +208,9 @@ if st.button("🚀 Mulai Proses OCR, Sorting, Generate Excel & PDF", type="prima
                         failures.append((file.name, str(e)))
                     progress_bar.progress((i + 1) / total_files)
 
-        # Screenshot Flazz
-        flazz_items = []
+        # Screenshot Flazz — simpan per file agar dedup antar-screenshot akurat
+        # (2 screenshot tumpang tindih menangkap riwayat yang sama).
+        flazz_items_by_file = []
         if flazz_files:
             with st.spinner("Memproses screenshot Flazz/e-money..."):
                 for file in flazz_files:
@@ -218,23 +218,22 @@ if st.button("🚀 Mulai Proses OCR, Sorting, Generate Excel & PDF", type="prima
                     image_bytes_list.append(img_bytes)  # ikut masuk PDF gabungan
                     try:
                         parsed = call_vision(provider_name, selected_model, img_bytes, FLAZZ_PROMPT)
-                        if isinstance(parsed, list):
-                            flazz_items.extend(parsed)
-                        elif isinstance(parsed, dict):
-                            flazz_items.append(parsed)
+                        if isinstance(parsed, dict):
+                            parsed = [parsed]
+                        flazz_items_by_file.append(parsed if isinstance(parsed, list) else [])
                     except Exception as e:
                         failures.append((file.name, str(e)))
+                        flazz_items_by_file.append([])
 
         if failures:
             with st.expander(f"⚠️ {len(failures)} file gagal diproses"):
                 for fname, err in failures:
                     st.write(f"- {fname}: {err}")
 
-        # Dedup Flazz vs struk parkir + skip top up
+        # Dedup Flazz vs struk parkir + skip top up + dedup antar-screenshot
         receipt_df = build_rows(extracted_items)
-        flazz_norm = normalise_flazz_rows(flazz_items)
         flazz_kept, flazz_skipped, matched = dedupe_flazz_against_receipts(
-            flazz_norm, receipt_df.to_dict("records")
+            flazz_items_by_file, receipt_df.to_dict("records")
         )
 
         # Baris Flazz parkir yang tetap -> jadi baris struk "parkir" (description '-')
@@ -270,7 +269,7 @@ if st.session_state.extracted_items:
     df = build_rows(st.session_state.extracted_items)
     display_df = df[["date", "category", "description", "nominal"]].copy()
     display_df["date"] = display_df["date"].apply(lambda d: d.strftime("%d %b %Y") if d else "-")
-    st.dataframe(display_df, use_container_width=True)
+    st.dataframe(display_df, width="stretch")
     st.markdown(f"**Total: Rp {df['nominal'].sum():,.0f}**".replace(",", "."))
 
     # GPS dari foto struk (dipertahankan)
@@ -292,7 +291,6 @@ if st.session_state.extracted_items:
         TEMPLATE_PATH,
         {"name": name, "department": department, "purpose": purpose, "bank_acc": bank_acc},
     )
-    pdf_bytes = merge_images_to_pdf(st.session_state.image_bytes_list)
 
     dcol1, dcol2 = st.columns(2)
     with dcol1:
@@ -303,9 +301,18 @@ if st.session_state.extracted_items:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
     with dcol2:
-        st.download_button(
-            "📥 Download PDF Bukti Gabungan (tanpa kompresi)",
-            data=pdf_bytes,
-            file_name=f"Bukti_Gabungan_{date.today().strftime('%Y%m')}.pdf",
-            mime="application/pdf",
-        )
+        # PDF dibuat terpisah: kalau gagal, Excel tetap bisa diunduh.
+        try:
+            pdf_bytes = merge_images_to_pdf(st.session_state.image_bytes_list)
+            if pdf_bytes:
+                st.download_button(
+                    "📥 Download PDF Bukti Gabungan (tanpa kompresi)",
+                    data=pdf_bytes,
+                    file_name=f"Bukti_Gabungan_{date.today().strftime('%Y%m')}.pdf",
+                    mime="application/pdf",
+                )
+            else:
+                st.caption("Tidak ada gambar bukti untuk PDF.")
+        except Exception as e:
+            st.error(f"Gagal membuat PDF gabungan: {e}")
+            st.caption("Excel tetap bisa diunduh di kiri.")
