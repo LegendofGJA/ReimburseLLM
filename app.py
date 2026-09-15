@@ -124,6 +124,30 @@ st.caption(
     "kalau ingin menguji model terpilih, pakai tombol Cek API Hidup di bawah."
 )
 
+# Info konsumsi token — bisa dibuka/tutup (nilai default tetutup agar tidak
+# memakan ruang layar). Sumber: log pemakaian provider Kagiro per 1 gambar.
+with st.expander("💡 Konsumsi token per gambar (hemat vs boros) — klik untuk buka"):
+    st.caption(
+        "Rata-rata token terpakai per 1 gambar, diurutkan dari paling hemat. "
+        "Pilih model di atas berdasarkan tabel ini kalau ingin menekan biaya."
+    )
+    st.markdown(
+        """
+| Peringkat | Model | Rata-rata token / gambar | Catatan |
+|:--:|---|--:|---|
+| 🥇 1 | **Kimi k2.7 Code** | ~6.433 | Paling hemat (70.763 token / 11 gambar) |
+| 🥈 2 | **DS Vision** | 7.938 | Paling hemat kedua |
+| 🥉 3 | **Kimi k2.6** | 8.643 | Hemat |
+| 4 | **Kimi k3** | 20.628 | Sedang |
+| 5 | **Gemini 3.7f** | 21.383 | Sedang |
+| 6 | **Gemini 3.6f** | 37.020 | Paling boros |
+"""
+    )
+    st.caption(
+        "Kesimpulan: **Kimi k2.7 Code** paling hemat untuk OCR, disusul **DS Vision**. "
+        "Hindari model Gemini lama (3.6f) untuk banyak gambar."
+    )
+
 if provider_name and selected_model != "Model tidak tersedia":
     with st.expander("🩺 Cek API hidup (ping sungguhan ke model terpilih)"):
         st.caption(
