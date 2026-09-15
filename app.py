@@ -131,7 +131,7 @@ if provider_name and selected_model != "Model tidak tersedia":
             "tidak memakan token kecuali kamu eksekusi."
         )
         if st.button("🔄 Test ping model sekarang"):
-            with st.spinner(f"Mengirim ping ke {provider_name} / {selected_model}..."):
+            with st.spinner(f"Mengirim pesan 'hi' ke {provider_name} / {selected_model}..."):
                 ok, pesan, _ms = ping_model(provider_name, selected_model)
             if ok:
                 st.success(pesan)
