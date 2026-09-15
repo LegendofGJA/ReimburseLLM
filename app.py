@@ -27,7 +27,7 @@ from extract_core import (
     normalise_flazz_rows,
 )
 from gps_core import gps_location_name, read_gps
-from llm_core import PROVIDERS, check_all_providers, fetch_models, ping_model
+from llm_core import PROVIDERS, fetch_vision_models, ping_model
 from llm_core import call_vision
 from pdf_core import merge_images_to_pdf
 
@@ -93,64 +93,44 @@ for k, v in DEFAULTS.items():
 # ─────────────────────────────────────────────────────────────────────────
 st.subheader("Pemilihan Provider OCR")
 
-col_mode, col_prov = st.columns([1, 1])
-with col_mode:
-    mode = st.radio(
-        "Mode pemilihan provider",
-        ["Auto (cek semua, pakai yang aktif)", "Pilih manual"],
-        horizontal=True,
+provider_name = st.selectbox("Pilih Provider OCR", list(PROVIDERS.keys()))
+
+# Daftar model vision di-cache per provider supaya rerun Streamlit (mis. ganti
+# widget) tidak memanggil ulang endpoint /models berulang-ulang.
+_models_cache_key = f"vision_models_{provider_name}"
+if _models_cache_key not in st.session_state:
+    try:
+        st.session_state[_models_cache_key] = fetch_vision_models(provider_name)
+    except Exception as e:
+        st.session_state[_models_cache_key] = []
+        st.warning(f"Gagal mengambil daftar model: {e}")
+
+available_models = st.session_state[_models_cache_key]
+
+ref_col, model_col = st.columns([1, 3])
+with ref_col:
+    refresh_clicked = st.button("🔄 Refresh daftar model")
+with model_col:
+    selected_model = st.selectbox(
+        "Pilih Model Vision",
+        available_models if available_models else ["Model tidak tersedia"],
     )
 
-available_models = []
-provider_name = None
-status_text = ""
+if refresh_clicked:
+    st.session_state.pop(_models_cache_key, None)
+    st.rerun()
 
-if mode.startswith("Auto"):
-    # Auto: ping model sungguhan per provider, pilih provider pertama yang punya
-    # minimal satu model merespons beneran.
-    scan = check_all_providers()
-    chosen = None
-    chosen_models = []
-    detail_lines = []
-    for pname, info in scan.items():
-        models = info["models"]
-        results = info["results"]
-        ok_models = [m for m in models if results.get(m, (False,))[0]]
-        line = f"- **{pname}**: "
-        if ok_models:
-            line += "✅ " + ", ".join(ok_models)
-        else:
-            line += "❌ tidak ada model merespons"
-        detail_lines.append(line)
-        if chosen is None and ok_models:
-            chosen = pname
-            chosen_models = ok_models
-
-    if chosen:
-        provider_name = chosen
-        available_models = chosen_models
-        status_text = f"Provider aktif: **{chosen}** — ✅ model merespons beneran"
-    else:
-        provider_name = list(PROVIDERS.keys())[0]
-        available_models = fetch_models(provider_name)
-        status_text = "⚠️ Tidak ada provider yang merespons beneran. Daftar model default ditampilkan (belum terverifikasi)."
-
-    st.markdown(status_text)
-    with st.expander("Status cek semua provider (ping sungguhan)"):
-        for line in detail_lines:
-            st.markdown(line)
-else:
-    provider_name = st.selectbox("Pilih Provider OCR", list(PROVIDERS.keys()))
-    available_models = fetch_models(provider_name)
-    st.markdown(f"Provider: **{provider_name}**")
-
-selected_model = st.selectbox(
-    "Pilih Model Vision",
-    available_models if available_models else ["Model tidak tersedia"],
+st.caption(
+    "Daftar hanya model **vision** (bisa baca gambar). Tidak ada ping otomatis — "
+    "kalau ingin menguji model terpilih, pakai tombol Cek API Hidup di bawah."
 )
 
 if provider_name and selected_model != "Model tidak tersedia":
     with st.expander("🩺 Cek API hidup (ping sungguhan ke model terpilih)"):
+        st.caption(
+            "Ping hanya dijalankan saat tombol ini ditekan — tidak otomatis, "
+            "tidak memakan token kecuali kamu eksekusi."
+        )
         if st.button("🔄 Test ping model sekarang"):
             with st.spinner(f"Mengirim ping ke {provider_name} / {selected_model}..."):
                 ok, pesan, _ms = ping_model(provider_name, selected_model)
