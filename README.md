@@ -81,7 +81,7 @@ streamlit run app.py
 ## 📖 Cara Pakai
 
 1. **Isi Data Pemohon** di sidebar (Name, Department, Purpose, Bank Acc.).
-2. **Pilih Provider OCR** — Kagiro atau Bandel, lalu pilih **Model Vision**.
+2. **Pilih Provider OCR** — Kagiro, Bandel, atau 9router, lalu pilih **Model Vision** (dropdown hanya menampilkan model yang bisa membaca gambar).
    Daftar model diambil sekali per provider (tanpa ping) dan di-cache.
 3. *(Opsional)* **🩺 Cek API hidup** untuk memastikan model terpilih merespons.
 4. **Unggah Bukti** — foto struk fisik, dan screenshot Flazz/e-money (opsional).
