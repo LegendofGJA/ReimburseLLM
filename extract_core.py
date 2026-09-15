@@ -22,6 +22,7 @@ Analisis gambar struk ini dan kembalikan HANYA JSON murni (tanpa markdown, tanpa
 
 {
   "date": "YYYY-MM-DD",
+  "time": "HH:MM",
   "type": "bensin" | "parkir" | "drink",
   "nominal": <angka total akhir struk, tanpa titik/koma/Rp>,
   "fuel_type": "<nama jenis BBM apa adanya di struk, contoh: Pertalite / Pertamax / Pertamax Turbo, atau null jika bukan bensin>",
@@ -38,6 +39,8 @@ Aturan klasifikasi "type":
 
 Ambil "nominal" sebagai TOTAL AKHIR yang benar-benar dibayar pada struk.
 Tanggal WAJIB diambil dari tanggal transaksi yang tertera di struk, bukan diasumsikan.
+"time" WAJIB diisi jam transaksi (format 24 jam "HH:MM") jika struk mencantumkan jam.
+Jika struk TIDAK mencantumkan jam sama sekali, isi "time" dengan null. Jangan mengarang jam.
 Kembalikan JSON murni saja, tidak ada teks lain sebelum atau sesudahnya."""
 
 FLAZZ_PROMPT = """Kamu adalah sistem OCR untuk screenshot riwayat transaksi e-money (Flazz/BCA).
@@ -47,6 +50,7 @@ Kembalikan HANYA JSON array murni (tanpa markdown), setiap elemen:
 
 {
   "date": "YYYY-MM-DD",
+  "time": "HH:MM",
   "label": "<teks baris transaksi apa adanya, misal: Parking, Top Up, Merchant name>",
   "nominal": <angka nominal transaksi, tanpa titik/koma/Rp>,
   "is_topup": true|false
@@ -56,6 +60,9 @@ Aturan:
 - "is_topup" true hanya jika baris itu top up / isi saldo / topup; sisanya false.
 - Baris "Parking" biasanya adalah pembayaran parkir.
 - Ambil tanggal sesuai baris transaksi (format mungkin "06 Jul 2026").
+- "time" diisi jam transaksi ("HH:MM", 24 jam) jika screenshot mencantumkan jam.
+  Jika tidak ada jam pada baris tsb, isi null. Jangan mengarang jam.
+- Urutkan elemen array sesuai urutan tampil di screenshot.
 - Kembalikan JSON array murni saja, tidak ada teks lain sebelum/sesudahnya."""
 
 
@@ -109,12 +116,35 @@ def parse_date_safe(raw):
     if not text:
         return None
     try:
-        return dateparser.parse(text, dayfirst=False, yearfirst=True).date()
+        parsed = dateparser.parse(text, dayfirst=False, yearfirst=True)
+        return parsed.date() if parsed else None
     except Exception:
         try:
-            return dateparser.parse(text, dayfirst=True).date()
+            parsed = dateparser.parse(text, dayfirst=True)
+            return parsed.date() if parsed else None
         except Exception:
             return None
+
+
+def parse_time_safe(raw):
+    """Parse kolom 'time' (HH:MM atau HH:MM:SS) -> datetime.timedelta sejak tengah
+    malam, atau None bila kosong/tidak valid."""
+    from datetime import time as _time, timedelta
+
+    if not raw:
+        return None
+    if isinstance(raw, (int, float)):
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        t = dateparser.parse(text)
+        if t is None:
+            return None
+        return timedelta(hours=t.hour, minutes=t.minute, seconds=t.second)
+    except Exception:
+        return None
 
 
 def parse_nominal(value):
@@ -136,6 +166,30 @@ def _to_date(d):
     return d if d else __import__("datetime").date.max
 
 
+def _sort_datetime(item):
+    """Kunci sort gabungan: (date_obj atau date.max, time dalam detik atau -1).
+    -1 dipakai untuk baris tanpa jam agar baris berjam muncul duluan di hari
+    yang sama (urutan waktu memang tidak lengkap untuk baris tanpa jam)."""
+    d = item.get("date")
+    if not d or _is_na(d):
+        d = __import__("datetime").date.max
+    t = item.get("time")
+    if t is None or _is_na(t):
+        secs = -1
+    else:
+        secs = int(getattr(t, "total_seconds", lambda: 0)())
+    return (d, secs)
+
+
+def _is_na(v):
+    try:
+        import pandas as pd
+
+        return bool(pd.isna(v))
+    except Exception:
+        return False
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # Struk fisik -> rows
 # ─────────────────────────────────────────────────────────────────────────
@@ -143,7 +197,8 @@ def _to_date(d):
 
 def build_rows(extracted_items: list) -> list:
     """Ubah daftar hasil struk menjadi list dict (date, category, description,
-    nominal) dan urutkan kronologis (struk tanpa tanggal di akhir)."""
+    nominal) dan urutkan kronologis berdasarkan tanggal + jam (timestamp).
+    Baris tanpa tanggal diletakkan di akhir."""
     import pandas as pd
 
     rows = []
@@ -151,6 +206,7 @@ def build_rows(extracted_items: list) -> list:
         rows.append(
             {
                 "date": parse_date_safe(item.get("date")),
+                "time": parse_time_safe(item.get("time")),
                 "category": (item.get("type") or "-").strip().lower(),
                 "description": build_description(item),
                 "nominal": parse_nominal(item.get("nominal")),
@@ -160,8 +216,9 @@ def build_rows(extracted_items: list) -> list:
     df = pd.DataFrame(rows)
     if df.empty:
         return df
-    df["_sort_key"] = df["date"].apply(_to_date)
-    df = df.sort_values("_sort_key").drop(columns=["_sort_key"]).reset_index(drop=True)
+    df["_sort_key"] = df.apply(_sort_datetime, axis=1)
+    df = df.sort_values("_sort_key", kind="stable").drop(columns=["_sort_key"])
+    df = df.reset_index(drop=True)
     return df
 
 
@@ -198,6 +255,7 @@ def normalise_flazz_rows(flazz_items: list) -> list:
             result.append(
                 {
                     "date": parse_date_safe(it.get("date")),
+                    "time": parse_time_safe(it.get("time")),
                     "nominal": parse_nominal(it.get("nominal")),
                     "label": label,
                     "is_parking": is_parking,
