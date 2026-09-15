@@ -46,7 +46,7 @@ if not PROVIDERS:
     st.error(
         "Belum ada API key yang dikonfigurasi. Buat file `.streamlit/secrets.toml` "
         "(lihat `.streamlit/secrets.toml.example`) atau set environment variable "
-        "KAGIRO_API_KEY / BANDEL_API_KEY, lalu jalankan ulang aplikasi."
+        "KAGIRO_API_KEY / BANDEL_API_KEY / ROUTER9_API_KEY, lalu jalankan ulang aplikasi."
     )
     st.stop()
 
