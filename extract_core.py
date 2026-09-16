@@ -195,6 +195,21 @@ def _is_na(v):
 # ─────────────────────────────────────────────────────────────────────────
 
 
+def receipt_sort_key(parsed: dict):
+    """Kunci urutan PDF untuk satu struk fisik, dari tanggal & jam hasil OCR.
+
+    Memakai parser yang sama dengan build_rows supaya urutan halaman PDF selalu
+    konsisten dengan urutan baris Excel. Struk tanpa tanggal valid diletakkan
+    paling belakang (date.max)."""
+    if not isinstance(parsed, dict):
+        return _sort_datetime({})
+    item = {
+        "date": parse_date_safe(parsed.get("date")),
+        "time": parse_time_safe(parsed.get("time")),
+    }
+    return _sort_datetime(item)
+
+
 def build_rows(extracted_items: list) -> list:
     """Ubah daftar hasil struk menjadi list dict (date, category, description,
     nominal) dan urutkan kronologis berdasarkan tanggal + jam (timestamp).
