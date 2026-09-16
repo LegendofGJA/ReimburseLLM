@@ -24,6 +24,7 @@ from extract_core import (
     FLAZZ_PROMPT,
     build_rows,
     dedupe_flazz_against_receipts,
+    receipt_sort_key,
 )
 from gps_core import gps_location_name, read_gps
 from llm_core import PROVIDERS, fetch_vision_models, ping_model
@@ -77,7 +78,8 @@ with st.sidebar:
 # ─────────────────────────────────────────────────────────────────────────
 DEFAULTS = {
     "extracted_items": [],
-    "image_bytes_list": [],
+    "ordered_pdf_images": [],
+    "failed_scans": [],
     "flazz_rows": [],
     "flazz_kept": [],
     "flazz_skipped": 0,
@@ -209,8 +211,13 @@ if st.button("🚀 Mulai Proses OCR, Sorting, Generate Excel & PDF", type="prima
         st.error("Provider tidak aktif atau model tidak ditemukan. Gagal memproses.")
     else:
         extracted_items = []
-        image_bytes_list = []
         failures = []
+
+        # PDF: setiap foto struk disimpan sebagai (urutan tanggal, bytes) supaya
+        # halaman PDF bisa diurutkan kronologis. Foto yang gagal OCR masuk daftar
+        # terpisah (tanpa tanggal) -> ditaruh di akhir PDF.
+        receipt_pdf_pairs = []   # (sort_key, filename, img_bytes)
+        failed_pdf_images = []   # (filename, img_bytes)
 
         total_files = len(uploaded_files or [])
         if total_files:
@@ -218,7 +225,6 @@ if st.button("🚀 Mulai Proses OCR, Sorting, Generate Excel & PDF", type="prima
             with st.spinner("Memproses foto struk dengan AI Vision..."):
                 for i, file in enumerate(uploaded_files):
                     img_bytes = file.getvalue()
-                    image_bytes_list.append(img_bytes)
                     try:
                         parsed = call_vision(provider_name, selected_model, img_bytes, EXTRACTION_PROMPT)
                         if isinstance(parsed, dict) and (parsed.get("type") or "").strip().lower() == "parkir":
@@ -228,18 +234,23 @@ if st.button("🚀 Mulai Proses OCR, Sorting, Generate Excel & PDF", type="prima
                                 if gps_name:
                                     parsed["location_name"] = gps_name
                         extracted_items.append(parsed)
+                        sort_key = receipt_sort_key(parsed)
+                        receipt_pdf_pairs.append((sort_key, file.name, img_bytes))
                     except Exception as e:
                         failures.append((file.name, str(e)))
+                        failed_pdf_images.append((file.name, img_bytes))
                     progress_bar.progress((i + 1) / total_files)
 
         # Screenshot Flazz — simpan per file agar dedup antar-screenshot akurat
         # (2 screenshot tumpang tindih menangkap riwayat yang sama).
+        # Screenshot Flazz SELALU ditaruh di akhir PDF (bukan bukti struk fisik).
         flazz_items_by_file = []
+        flazz_pdf_images = []
         if flazz_files:
             with st.spinner("Memproses screenshot Flazz/e-money..."):
                 for file in flazz_files:
                     img_bytes = file.getvalue()
-                    image_bytes_list.append(img_bytes)  # ikut masuk PDF gabungan
+                    flazz_pdf_images.append((file.name, img_bytes))
                     try:
                         parsed = call_vision(provider_name, selected_model, img_bytes, FLAZZ_PROMPT)
                         if isinstance(parsed, dict):
@@ -250,9 +261,13 @@ if st.button("🚀 Mulai Proses OCR, Sorting, Generate Excel & PDF", type="prima
                         flazz_items_by_file.append([])
 
         if failures:
-            with st.expander(f"⚠️ {len(failures)} file gagal diproses"):
+            st.warning(
+                f"⚠️ {len(failures)} file gagal di-scan dan tetap dimasukkan ke akhir PDF "
+                f"(baris Excel untuk file ini tidak ada):"
+            )
+            with st.expander(f"Lihat {len(failures)} file yang gagal di-scan"):
                 for fname, err in failures:
-                    st.write(f"- {fname}: {err}")
+                    st.write(f"- **{fname}**: {err}")
 
         # Dedup Flazz vs struk parkir + skip top up + dedup antar-screenshot
         receipt_df = build_rows(extracted_items)
@@ -276,8 +291,18 @@ if st.button("🚀 Mulai Proses OCR, Sorting, Generate Excel & PDF", type="prima
 
         final_items = extracted_items + flazz_as_receipts
 
+        # Urutan halaman PDF:
+        #   1) struk fisik, kronologis sesuai tanggal & jam pada struk
+        #   2) screenshot Flazz (selalu di akhir)
+        #   3) foto yang gagal OCR (tanpa tanggal, paling akhir)
+        receipt_pdf_pairs.sort(key=lambda p: p[0])
+        ordered_images = [b for _, _, b in receipt_pdf_pairs]
+        ordered_images += [b for _, b in flazz_pdf_images]
+        ordered_images += [b for _, b in failed_pdf_images]
+
         st.session_state.extracted_items = final_items
-        st.session_state.image_bytes_list = image_bytes_list
+        st.session_state.ordered_pdf_images = ordered_images
+        st.session_state.failed_scans = [fname for fname, _ in failures]
         st.session_state.flazz_kept = flazz_kept
         st.session_state.flazz_skipped = flazz_skipped
 
@@ -328,16 +353,25 @@ if st.session_state.extracted_items:
     with dcol2:
         # PDF dibuat terpisah: kalau gagal, Excel tetap bisa diunduh.
         try:
-            pdf_bytes = merge_images_to_pdf(st.session_state.image_bytes_list)
+            ordered_images = st.session_state.get("ordered_pdf_images") or []
+            pdf_bytes = merge_images_to_pdf(ordered_images)
             if pdf_bytes:
                 st.download_button(
                     "📥 Download PDF Bukti Gabungan (tanpa kompresi)",
                     data=pdf_bytes,
                     file_name=f"Bukti_Gabungan_{date.today().strftime('%Y%m')}.pdf",
                     mime="application/pdf",
+                    help="Urutan halaman: struk kronologis → screenshot Flazz → foto gagal scan.",
                 )
             else:
                 st.caption("Tidak ada gambar bukti untuk PDF.")
         except Exception as e:
             st.error(f"Gagal membuat PDF gabungan: {e}")
             st.caption("Excel tetap bisa diunduh di kiri.")
+
+    failed_scans = st.session_state.get("failed_scans") or []
+    if failed_scans:
+        st.warning(
+            f"⚠️ {len(failed_scans)} foto gagal di-scan (tidak ada baris Excel-nya). "
+            f"Foto ini tetap ditaruh di **akhir PDF**: " + ", ".join(failed_scans)
+        )
